@@ -28,12 +28,17 @@ const fetchCryptoDataFromAPI = async (coin) => {
 // Store cryptocurrency data in the database
 const storeCryptoDataInDB = async (cryptoData) => {
   try {
-    // Upsert the data (update if it exists, insert if it doesn't)
-    await Crypto.findOneAndUpdate(
-      { coin: cryptoData.coin }, // Find by coin ID
-      cryptoData, // Update with new data
-      { upsert: true, new: true } // Options: create if not found, return updated document
-    );
+    // Insert a new document with a timestamp
+    const newEntry = new Crypto({
+      coin: cryptoData.coin,
+      currentPrice: cryptoData.currentPrice,
+      marketCap: cryptoData.marketCap,
+      change24h: cryptoData.change24h,
+      lastUpdated: new Date(), // Record the fetch time
+    });
+
+    await newEntry.save();
+    console.log(`Data stored for ${cryptoData.coin}:`, newEntry);
   } catch (error) {
     console.error(`Error storing data for ${cryptoData.coin}:`, error.message);
   }
@@ -53,21 +58,23 @@ cron.schedule("0 */2 * * *", async () => {
 });
 
 // API Endpoint: Fetch the latest cryptocurrency data from the database
-// API Endpoint: Fetch the latest cryptocurrency data from the database
 const getCryptoStats = async (req, res) => {
   try {
     const { coin } = req.query; // Get the coin from the query parameter
+
+    // Validate the coin parameter
     if (!COINS.includes(coin)) {
       return res.status(400).json({
         error: "Invalid coin. Choose from bitcoin, matic-network, ethereum.",
       });
     }
 
-    // Fetch specific coin data from the database, selecting only the required fields
-    const data = await Crypto.findOne({ coin }).select(
-      "coin currentPrice marketCap change24h"
-    );
+    // Fetch the most recent data for the specified coin
+    const data = await Crypto.findOne({ coin })
+      .sort({ lastUpdated: -1 }) // Sort by most recent
+      .select("coin currentPrice marketCap change24h lastUpdated");
 
+    // If no data exists for the coin, return a 404 response
     if (!data) {
       return res
         .status(404)
@@ -76,9 +83,11 @@ const getCryptoStats = async (req, res) => {
 
     // Format the response to include only relevant fields
     const response = {
+      coin: data.coin,
       price: data.currentPrice,
       marketCap: data.marketCap,
       "24hChange": data.change24h,
+      lastUpdated: data.lastUpdated, // Include timestamp
     };
 
     // Return the formatted data for the requested coin
